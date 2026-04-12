@@ -44,6 +44,8 @@ def map_field_type(at_field):
         return {"type": "multipleSelect", "options": {"choices": [{"name": c["name"]} for c in choices]}}
     elif at_type in ["date", "dateTime"]:
         return {"type": "date"}
+    elif at_type == "multipleAttachments":
+        return {"type": "__attachment__"}
     elif at_type == "multipleRecordLinks":
         return {"type": "__link__"}
     elif at_type in ["formula", "rollup", "multipleLookupValues"]:
@@ -68,6 +70,8 @@ def convert_value_for_teable(value, mapped_type):
         return bool(value)
     elif mapped_type in ["singleSelect", "multipleSelect", "date"]:
         return value
+    elif mapped_type == "attachment":
+        return None
     return str(value)
 
 def fetch_airtable_records(table_id):
@@ -177,6 +181,67 @@ def update_link_records(teable_table_id, updates):
         time.sleep(0.2)
     return success, fail
 
+def get_teable_fields(table_id):
+    res = requests.get(
+        f"{TEABLE_URL}/api/table/{table_id}/field",
+        headers=get_teable_headers(),
+        verify=False
+    )
+    res.raise_for_status()
+    return res.json()
+
+def upload_attachment(table_id, record_id, field_id, file_url):
+    headers = {"Authorization": f"Bearer {TEABLE_API_KEY}"}
+    res = requests.post(
+        f"{TEABLE_URL}/api/table/{table_id}/record/{record_id}/{field_id}/uploadAttachment",
+        headers=headers,
+        data={"fileUrl": file_url},
+        verify=False
+    )
+    if res.status_code not in [200, 201]:
+        print(f"    Attachment upload failed ({res.status_code}): {res.text[:200]}")
+        return False
+    return True
+
+def migrate_attachments_for_table(teable_table_id, attachment_field_names, at_records, at_to_teable_rec):
+    if not attachment_field_names:
+        return 0, 0
+
+    teable_fields = get_teable_fields(teable_table_id)
+    field_name_to_id = {}
+    for f in teable_fields:
+        if f["name"] in attachment_field_names and f["type"] == "attachment":
+            field_name_to_id[f["name"]] = f["id"]
+
+    if not field_name_to_id:
+        print(f"  Warning: No attachment fields found in Teable table {teable_table_id}")
+        return 0, 0
+
+    success, fail = 0, 0
+    for at_rec in at_records:
+        teable_rec_id = at_to_teable_rec.get(at_rec["id"])
+        if not teable_rec_id:
+            continue
+
+        fields = at_rec.get("fields", {})
+        for field_name, field_id in field_name_to_id.items():
+            attachments = fields.get(field_name)
+            if not attachments or not isinstance(attachments, list):
+                continue
+
+            for att in attachments:
+                url = att.get("url")
+                if not url:
+                    continue
+                ok = upload_attachment(teable_table_id, teable_rec_id, field_id, url)
+                if ok:
+                    success += 1
+                else:
+                    fail += 1
+                time.sleep(0.1)
+
+    return success, fail
+
 def main():
     print("Fetching Airtable schema...")
     at_tables = fetch_airtable_schema()
@@ -219,6 +284,7 @@ def main():
         teable_fields = []
         final_field_types = {}
         link_field_names = set()
+        attachment_field_names = set()
 
         for f in at_table.get("fields", []):
             field_name = f["name"]
@@ -228,6 +294,12 @@ def main():
                 link_field_names.add(field_name)
                 continue
             if mapped["type"] == "__skip__":
+                continue
+            if mapped["type"] == "__attachment__":
+                attachment_field_names.add(field_name)
+                mapped = {"type": "attachment", "name": field_name}
+                teable_fields.append(mapped)
+                final_field_types[field_name] = "attachment"
                 continue
 
             mapped["name"] = field_name
@@ -248,7 +320,7 @@ def main():
             fields = rec.get("fields", {})
             new_fields = {}
             for k, v in fields.items():
-                if k in final_field_types and k not in link_field_names:
+                if k in final_field_types and k not in link_field_names and k not in attachment_field_names:
                     new_fields[k] = convert_value_for_teable(v, final_field_types[k])
             teable_records_payload.append({"fields": new_fields})
 
@@ -256,6 +328,14 @@ def main():
         id_map = insert_teable_records(teable_table_id, teable_records_payload, at_records)
         at_to_teable_rec.update(id_map)
         print(f"  Mapped {len(id_map)} record IDs.")
+
+        # ── Phase D (inline): Upload attachments for this table ──
+        if attachment_field_names:
+            print(f"  Uploading attachments for {len(attachment_field_names)} field(s)...")
+            att_s, att_f = migrate_attachments_for_table(
+                teable_table_id, attachment_field_names, at_records, at_to_teable_rec
+            )
+            print(f"  Attachments: {att_s} uploaded, {att_f} failed.")
 
     # ── PHASE B: Create link fields ──
     print("\n" + "=" * 60)

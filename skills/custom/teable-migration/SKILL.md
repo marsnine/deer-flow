@@ -28,6 +28,7 @@ Run `scripts/step1_migrate_base.py`.
   - **Phase A**: Creates all Teable tables with non-link fields (text, number, select, etc.) and inserts records. Builds a global Airtable-to-Teable record ID mapping via positional matching from the insert API response.
   - **Phase B**: Creates `link` type fields with `foreignTableId` pointing to the correct Teable target table. Handles reciprocal (inverse) link deduplication so Teable's auto-created symmetric fields are not duplicated.
   - **Phase C**: Populates link field data by converting Airtable record ID arrays to Teable record IDs using the mapping from Phase A, then PATCHing link values into each record.
+  - **Phase D** (inline per table): Uploads attachment files from Airtable to Teable. For each record with `multipleAttachments` data, calls the Teable upload API with `fileUrl` pointing to the Airtable attachment URL. Runs immediately after each table's records are inserted to avoid Airtable's 2-hour URL expiration.
 - **Skipped field types**: `formula`, `rollup`, and `multipleLookupValues` fields are intentionally skipped (not created as placeholder text fields). They are handled by Step 2 and Step 3.
 - **Important**: You may need to edit `scripts/step1_migrate_base.py` to inject the user's provided credentials before running it.
 

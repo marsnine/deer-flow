@@ -58,13 +58,23 @@ export function ArtifactFileDetail({
   const isWriteFile = useMemo(() => {
     return filepathFromProps.startsWith("write-file:");
   }, [filepathFromProps]);
+  const isEmbed = useMemo(() => {
+    return filepathFromProps.startsWith("embed:");
+  }, [filepathFromProps]);
+  const embedUrl = useMemo(() => {
+    if (!isEmbed) return null;
+    return filepathFromProps.slice("embed:".length);
+  }, [filepathFromProps, isEmbed]);
   const filepath = useMemo(() => {
     if (isWriteFile) {
       const url = new URL(filepathFromProps);
       return decodeURIComponent(url.pathname);
     }
+    if (isEmbed) {
+      return filepathFromProps;
+    }
     return filepathFromProps;
-  }, [filepathFromProps, isWriteFile]);
+  }, [filepathFromProps, isWriteFile, isEmbed]);
   const isSkillFile = useMemo(() => {
     return filepath.endsWith(".skill");
   }, [filepath]);
@@ -128,7 +138,9 @@ export function ArtifactFileDetail({
       <ArtifactHeader className="px-2">
         <div className="flex items-center gap-2">
           <ArtifactTitle>
-            {isWriteFile ? (
+            {isEmbed ? (
+              <div className="px-2">Teable View</div>
+            ) : isWriteFile ? (
               <div className="px-2">{getFileName(filepath)}</div>
             ) : (
               <Select value={filepath} onValueChange={select}>
@@ -149,7 +161,7 @@ export function ArtifactFileDetail({
           </ArtifactTitle>
         </div>
         <div className="flex min-w-0 grow items-center justify-center">
-          {isSupportPreview && (
+          {!isEmbed && isSupportPreview && (
             <ToggleGroup
               className="mx-auto"
               type="single"
@@ -173,7 +185,22 @@ export function ArtifactFileDetail({
         </div>
         <div className="flex items-center gap-2">
           <ArtifactActions>
-            {!isWriteFile && filepath.endsWith(".skill") && (
+            {isEmbed && embedUrl && (
+              <ArtifactAction
+                icon={SquareArrowOutUpRightIcon}
+                label={t.common.openInNewWindow}
+                tooltip={t.common.openInNewWindow}
+                onClick={() => {
+                  const w = window.open(
+                    embedUrl,
+                    "_blank",
+                    "noopener,noreferrer",
+                  );
+                  if (w) w.opener = null;
+                }}
+              />
+            )}
+            {!isEmbed && !isWriteFile && filepath.endsWith(".skill") && (
               <Tooltip content={t.toolCalls.skillInstallTooltip}>
                 <ArtifactAction
                   icon={isInstalling ? LoaderIcon : PackageIcon}
@@ -187,7 +214,7 @@ export function ArtifactFileDetail({
                 />
               </Tooltip>
             )}
-            {!isWriteFile && (
+            {!isEmbed && !isWriteFile && (
               <ArtifactAction
                 icon={SquareArrowOutUpRightIcon}
                 label={t.common.openInNewWindow}
@@ -202,7 +229,7 @@ export function ArtifactFileDetail({
                 }}
               />
             )}
-            {isCodeFile && (
+            {!isEmbed && isCodeFile && (
               <ArtifactAction
                 icon={CopyIcon}
                 label={t.clipboard.copyToClipboard}
@@ -219,7 +246,7 @@ export function ArtifactFileDetail({
                 tooltip={t.clipboard.copyToClipboard}
               />
             )}
-            {!isWriteFile && (
+            {!isEmbed && !isWriteFile && (
               <ArtifactAction
                 icon={DownloadIcon}
                 label={t.common.download}
@@ -249,7 +276,17 @@ export function ArtifactFileDetail({
         </div>
       </ArtifactHeader>
       <ArtifactContent className="p-0">
-        {isSupportPreview &&
+        {isEmbed && embedUrl && (
+          <iframe
+            className="size-full"
+            src={embedUrl}
+            title="Embedded View"
+            allow="clipboard-read; clipboard-write"
+            style={{ border: "none" }}
+          />
+        )}
+        {!isEmbed &&
+          isSupportPreview &&
           viewMode === "preview" &&
           (language === "markdown" || language === "html") && (
             <ArtifactFilePreview
@@ -257,14 +294,14 @@ export function ArtifactFileDetail({
               language={language ?? "text"}
             />
           )}
-        {isCodeFile && viewMode === "code" && (
+        {!isEmbed && isCodeFile && viewMode === "code" && (
           <CodeEditor
             className="size-full resize-none rounded-none border-none"
             value={displayContent ?? ""}
             readonly
           />
         )}
-        {!isCodeFile && (
+        {!isEmbed && !isCodeFile && (
           <iframe
             className="size-full"
             src={urlOfArtifact({ filepath, threadId, isMock })}

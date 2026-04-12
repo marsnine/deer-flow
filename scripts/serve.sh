@@ -35,6 +35,15 @@ cd "$REPO_ROOT"
 
 # ── Load .env ────────────────────────────────────────────────────────────────
 
+# Load parent project .env first (infrastructure vars: Teable, DB, OAuth, etc.)
+PARENT_ENV="$REPO_ROOT/../.env"
+if [ -f "$PARENT_ENV" ]; then
+    set -a
+    source "$PARENT_ENV"
+    set +a
+fi
+
+# Load agent .env second (overrides parent if same key exists)
 if [ -f "$REPO_ROOT/.env" ]; then
     set -a
     source "$REPO_ROOT/.env"
@@ -148,7 +157,7 @@ fi
 # Extra flags for uvicorn/langgraph
 LANGGRAPH_EXTRA_FLAGS="--no-reload"
 if $DEV_MODE && ! $DAEMON_MODE; then
-    GATEWAY_EXTRA_FLAGS="--reload --reload-include='*.yaml' --reload-include='.env' --reload-exclude='*.pyc' --reload-exclude='__pycache__' --reload-exclude='sandbox/' --reload-exclude='.deer-flow/'"
+    GATEWAY_EXTRA_FLAGS="--reload --reload-include='*.yaml' --reload-include='.env' --reload-exclude='*.pyc' --reload-exclude='__pycache__' --reload-exclude='sandbox/' --reload-exclude='$REPO_ROOT/backend/.deer-flow/'"
 else
     GATEWAY_EXTRA_FLAGS=""
 fi

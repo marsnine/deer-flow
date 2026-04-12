@@ -10,7 +10,7 @@ CATALOG = {
         "replaces": "Bitwarden, 1Password, LastPass",
         "savings": "1Password: $7.99/user/mo → Free (self-hosted)",
         "port": 8003,
-        "url": "https://dev.drfuturewalker.com:8443",
+        "url": "https://vault.david.sprintsolo.dev",
         "features": [
             "Password vault with browser extension",
             "Secure password generation",
@@ -28,7 +28,7 @@ CATALOG = {
         "replaces": "Airtable, Google Sheets (advanced), NocoDB",
         "savings": "Airtable: $20/user/mo → Free (self-hosted)",
         "port": 8002,
-        "url": "https://dev.drfuturewalker.com:8444",
+        "url": "https://teable.david.sprintsolo.dev",
         "features": [
             "Airtable-like spreadsheet interface on PostgreSQL",
             "Multiple views (Grid, Gallery, Kanban, Form, Calendar)",
@@ -48,7 +48,7 @@ CATALOG = {
         "replaces": "Salesforce, HubSpot, Pipedrive",
         "savings": "HubSpot Starter: $20/user/mo → Free (self-hosted)",
         "port": 3002,
-        "url": "https://dev.drfuturewalker.com:8446",
+        "url": "https://crm.david.sprintsolo.dev",
         "features": [
             "Contact & company management",
             "Deal pipeline",

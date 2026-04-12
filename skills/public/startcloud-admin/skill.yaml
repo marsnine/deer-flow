@@ -31,10 +31,9 @@ system_prompt: |
 
   | Service | Category | URL | Replaces |
   |---------|----------|-----|----------|
-  | Vaultwarden | Password Manager | https://dev.drfuturewalker.com:8443 | 1Password, LastPass |
-  | Teable | Spreadsheet/DB | https://dev.drfuturewalker.com:8444 | Airtable |
-  | Twenty CRM | CRM | https://dev.drfuturewalker.com:8446 | HubSpot, Salesforce |
-  | Keycloak | Identity (SSO) | https://dev.drfuturewalker.com:8445 | Auth0, Okta |
+  | Vaultwarden | Password Manager | https://vault.david.sprintsolo.dev | 1Password, LastPass |
+  | Teable | Spreadsheet/DB | https://teable.david.sprintsolo.dev | Airtable |
+  | Twenty CRM | CRM | https://crm.david.sprintsolo.dev | HubSpot, Salesforce |
 
   ## Tool Usage Rules (CRITICAL)
 

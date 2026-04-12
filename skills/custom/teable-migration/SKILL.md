@@ -28,8 +28,8 @@ Run `scripts/step1_migrate_base.py`.
   - **Phase A**: Creates all Teable tables with non-link fields (text, number, select, etc.) and inserts records. Builds a global Airtable-to-Teable record ID mapping via positional matching from the insert API response.
   - **Phase B**: Creates `link` type fields with `foreignTableId` pointing to the correct Teable target table. Handles reciprocal (inverse) link deduplication so Teable's auto-created symmetric fields are not duplicated.
   - **Phase C**: Populates link field data by converting Airtable record ID arrays to Teable record IDs using the mapping from Phase A, then PATCHing link values into each record.
-  - **Phase D** (inline per table): Uploads attachment files from Airtable to Teable. For each record with `multipleAttachments` data, calls the Teable upload API with `fileUrl` pointing to the Airtable attachment URL. Runs immediately after each table's records are inserted to avoid Airtable's 2-hour URL expiration.
 - **Skipped field types**: `formula`, `rollup`, and `multipleLookupValues` fields are intentionally skipped (not created as placeholder text fields). They are handled by Step 2 and Step 3.
+- **Mapping file**: Saves `scripts/migration_mapping.json` with Airtable→Teable table/record ID mappings and attachment field info. This is consumed by Step 4.
 - **Important**: You may need to edit `scripts/step1_migrate_base.py` to inject the user's provided credentials before running it.
 
 ### Step 2: Lookups and Rollups
@@ -42,6 +42,17 @@ Run `scripts/step3_migrate_formulas.py`.
 - **What it does**: Parses the Airtable formula AST syntax (`{fld...}`) and converts it to Teable syntax. Handles unsupported functions (like `REGEX_MATCH` or `IRR`) by inserting string placeholders so the schema does not break.
 - **Important**: Edit credentials in the script before running.
 
+### Step 4: Attachments (per-table)
+Run `scripts/step4_migrate_attachments.py` **one table at a time**.
+- **What it does**: Uploads Airtable attachment files to Teable via `fileUrl`. Fetches fresh Airtable records at execution time so URLs are not expired (Airtable URLs expire after 2 hours).
+- **Usage**:
+  - `python step4_migrate_attachments.py` — Lists all tables with attachment fields
+  - `python step4_migrate_attachments.py "테이블이름"` — Migrate one table
+  - `python step4_migrate_attachments.py --all` — Migrate all tables sequentially
+- **Why per-table**: Each table's migration fits within the sandbox bash timeout (10 min). Running one table at a time also keeps Airtable URLs fresh.
+- **Prerequisite**: `scripts/migration_mapping.json` must exist (created by Step 1).
+- **Important**: Edit credentials in the script before running.
+
 ## Best Practices
 1. **Always Verify Credentials**: Do not hardcode the demo credentials. Always ask the user for their specific environment variables.
 2. **Handle Errors Gracefully**: Teable will return HTTP 400/500 if a formula dependency is missing. Fall back to creating a `singleLineText` field or a placeholder string if a calculation fails.
@@ -51,3 +62,4 @@ Run `scripts/step3_migrate_formulas.py`.
 - `step1_migrate_base.py`
 - `step2_migrate_lookups.py`
 - `step3_migrate_formulas.py`
+- `step4_migrate_attachments.py`

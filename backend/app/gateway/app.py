@@ -17,6 +17,7 @@ from app.gateway.routers import (
     runs,
     skills,
     suggestions,
+    teable,
     thread_runs,
     threads,
     uploads,
@@ -145,6 +146,10 @@ This gateway provides custom endpoints for models, MCP configuration, skills, an
                 "description": "Generate follow-up question suggestions for conversations",
             },
             {
+                "name": "teable",
+                "description": "Teable database proxy API for table listing, view sharing, and agent provisioning",
+            },
+            {
                 "name": "channels",
                 "description": "Manage IM channel integrations (Feishu, Slack, Telegram)",
             },
@@ -192,6 +197,9 @@ This gateway provides custom endpoints for models, MCP configuration, skills, an
 
     # Suggestions API is mounted at /api/threads/{thread_id}/suggestions
     app.include_router(suggestions.router)
+
+    # Teable API is mounted at /api/teable
+    app.include_router(teable.router)
 
     # Channels API is mounted at /api/channels
     app.include_router(channels.router)

@@ -335,6 +335,7 @@ tool_groups:
   - name: file:read
   - name: file:write
   - name: bash
+  - name: teable
 
 # ============================================================================
 # Tools Configuration
@@ -458,6 +459,37 @@ tools:
   - name: bash
     group: bash
     use: deerflow.sandbox.tools:bash_tool
+
+  # --------------------------------------------------------------------------
+  # Teable tools (requires TEABLE_API_TOKEN in .env)
+  # --------------------------------------------------------------------------
+  - name: teable_list_spaces
+    group: teable
+    use: deerflow.tools.startcloud:teable_list_spaces
+  - name: teable_get_fields
+    group: teable
+    use: deerflow.tools.startcloud:teable_get_fields
+  - name: teable_query_records
+    group: teable
+    use: deerflow.tools.startcloud:teable_query_records
+  - name: teable_create_records
+    group: teable
+    use: deerflow.tools.startcloud:teable_create_records
+  - name: teable_update_records
+    group: teable
+    use: deerflow.tools.startcloud:teable_update_records
+  - name: teable_delete_records
+    group: teable
+    use: deerflow.tools.startcloud:teable_delete_records
+  - name: teable_manage_table
+    group: teable
+    use: deerflow.tools.startcloud:teable_manage_table
+  - name: teable_aggregate
+    group: teable
+    use: deerflow.tools.startcloud:teable_aggregate
+  - name: teable_show_view
+    group: teable
+    use: deerflow.tools.startcloud:teable_show_view
 
 # ============================================================================
 # Tool Search Configuration (Deferred Tool Loading)

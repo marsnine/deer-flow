@@ -6,6 +6,7 @@ via Teable's WebSocket when data changes through API calls.
 """
 
 import json
+import re
 from typing import Annotated
 
 from langchain.tools import InjectedToolCallId, ToolRuntime, tool
@@ -16,6 +17,60 @@ from langgraph.typing import ContextT
 from deerflow.agents.thread_state import ThreadState
 
 from .teable_client import check_configured, get_public_url, teable_post
+
+# Date-like string pattern: YYYY-MM-DD or ISO datetime
+_DATE_RE = re.compile(r"^\d{4}-\d{2}-\d{2}")
+
+# Operators that Teable's DatetimeCellValueFilterAdapter expects
+# with object-style values ({mode, exactDate, timeZone})
+_DATE_OPERATORS = {"isAfter", "isBefore", "isOnOrAfter", "isOnOrBefore", "is", "isNot"}
+
+# Map numeric operators to proper date operators
+_OPERATOR_REMAP = {
+    "isGreater": "isAfter",
+    "isGreaterEqual": "isOnOrAfter",
+    "isLess": "isBefore",
+    "isLessEqual": "isOnOrBefore",
+}
+
+
+def _normalize_date_filter(filter_obj):
+    """Recursively normalize date filter values for Teable's share view renderer.
+
+    Teable's view creation API accepts plain string date values like "2026-04-12",
+    but the share view renderer (DatetimeCellValueFilterAdapter.getFilterDateTimeRange)
+    requires an object: {mode: "exactDate", exactDate: "...", timeZone: "..."}.
+
+    This function also remaps numeric operators (isGreater -> isAfter) for date fields.
+    """
+    if not isinstance(filter_obj, dict):
+        return filter_obj
+
+    # Process filterSet arrays
+    if "filterSet" in filter_obj:
+        filter_obj["filterSet"] = [
+            _normalize_date_filter(item) for item in filter_obj["filterSet"]
+        ]
+        return filter_obj
+
+    # Process individual filter items with operator + value
+    operator = filter_obj.get("operator", "")
+    value = filter_obj.get("value")
+
+    # Remap numeric operators to date operators
+    if operator in _OPERATOR_REMAP:
+        filter_obj["operator"] = _OPERATOR_REMAP[operator]
+        operator = filter_obj["operator"]
+
+    # Convert string date values to object format for date operators
+    if isinstance(value, str) and _DATE_RE.match(value) and operator in _DATE_OPERATORS:
+        filter_obj["value"] = {
+            "mode": "exactDate",
+            "exactDate": value,
+            "timeZone": "Asia/Seoul",
+        }
+
+    return filter_obj
 
 
 @tool("teable_show_view", parse_docstring=True)
@@ -51,7 +106,10 @@ def teable_show_view(
     }
     if filter_json:
         try:
-            view_body["filter"] = json.loads(filter_json)
+            filter_obj = json.loads(filter_json)
+            # Normalize date filter values for share view compatibility
+            filter_obj = _normalize_date_filter(filter_obj)
+            view_body["filter"] = filter_obj
         except json.JSONDecodeError as e:
             return Command(
                 update={"messages": [ToolMessage(f"filter_json 파싱 오류: {e}", tool_call_id=tool_call_id)]},

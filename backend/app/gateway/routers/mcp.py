@@ -12,7 +12,6 @@ from deerflow.config.extensions_config import ExtensionsConfig, get_extensions_c
 from deerflow.config.server_presets import get_oauth_preset, list_oauth_presets
 from deerflow.mcp.google_oauth import build_authorization_url, exchange_code_for_tokens
 from deerflow.mcp.oauth_session import get_session_store, pkce_challenge
-from deerflow.mcp.secrets import encrypt_server_sensitive
 
 logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/api", tags=["mcp"])
@@ -151,13 +150,9 @@ async def update_mcp_configuration(request: McpConfigUpdateRequest) -> McpConfig
         # Load current config to preserve skills configuration
         current_config = get_extensions_config()
 
-        # Convert request to dict format for JSON serialization, encrypting
-        # sensitive env vars and OAuth fields before they touch disk.
+        # Convert request to dict format for JSON serialization.
         config_data = {
-            "mcpServers": {
-                name: encrypt_server_sensitive(server.model_dump())
-                for name, server in request.mcp_servers.items()
-            },
+            "mcpServers": {name: server.model_dump() for name, server in request.mcp_servers.items()},
             "skills": {name: {"enabled": skill.enabled} for name, skill in current_config.skills.items()},
         }
 
@@ -365,11 +360,8 @@ async def mcp_oauth_callback(
             config_path = Path.cwd().parent / "extensions_config.json"
             logger.info("No existing extensions config; creating at %s", config_path)
 
-        merged_servers = {
-            name: encrypt_server_sensitive(server.model_dump())
-            for name, server in current.mcp_servers.items()
-        }
-        merged_servers[preset.id] = encrypt_server_sensitive(server_config)
+        merged_servers = {name: server.model_dump() for name, server in current.mcp_servers.items()}
+        merged_servers[preset.id] = server_config
 
         config_data = {
             "mcpServers": merged_servers,

@@ -134,12 +134,35 @@ class ExtensionsConfig(BaseModel):
         try:
             with open(resolved_path, encoding="utf-8") as f:
                 config_data = json.load(f)
+            cls.decrypt_secrets(config_data)
             cls.resolve_env_variables(config_data)
             return cls.model_validate(config_data)
         except json.JSONDecodeError as e:
             raise ValueError(f"Extensions config file at {resolved_path} is not valid JSON: {e}") from e
         except Exception as e:
             raise RuntimeError(f"Failed to load extensions config from {resolved_path}: {e}") from e
+
+    @classmethod
+    def decrypt_secrets(cls, config: dict[str, Any]) -> None:
+        """Decrypt any ``fernet:`` prefixed values inside ``mcpServers`` in place."""
+        # Imported lazily to avoid a hard dependency on ``cryptography`` at
+        # import time for consumers that only need the schema.
+        try:
+            from deerflow.mcp.secrets import decrypt_server_sensitive
+        except Exception:  # pragma: no cover - cryptography missing
+            return
+
+        servers = config.get("mcpServers") or config.get("mcp_servers")
+        if not isinstance(servers, dict):
+            return
+        for name, server in list(servers.items()):
+            if isinstance(server, dict):
+                try:
+                    servers[name] = decrypt_server_sensitive(server)
+                except Exception:
+                    # Leave value as-is; upstream validation or the first
+                    # real usage will surface the corruption.
+                    pass
 
     @classmethod
     def resolve_env_variables(cls, config: dict[str, Any]) -> dict[str, Any]:

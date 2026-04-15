@@ -1,6 +1,7 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 
 import { loadMCPConfig, updateMCPConfig } from "./api";
+import type { MCPServerConfig } from "./types";
 
 export function useMCPConfig() {
   const { data, isLoading, error } = useQuery({
@@ -36,6 +37,51 @@ export function useEnableMCPServer() {
           },
         },
       });
+    },
+    onSuccess: () => {
+      void queryClient.invalidateQueries({ queryKey: ["mcpConfig"] });
+    },
+  });
+}
+
+export function useAddMCPServer() {
+  const queryClient = useQueryClient();
+  const { config } = useMCPConfig();
+  return useMutation({
+    mutationFn: async ({
+      serverName,
+      serverConfig,
+    }: {
+      serverName: string;
+      serverConfig: MCPServerConfig;
+    }) => {
+      if (!config) {
+        throw new Error("MCP config not found");
+      }
+      await updateMCPConfig({
+        mcp_servers: {
+          ...config.mcp_servers,
+          [serverName]: serverConfig,
+        },
+      });
+    },
+    onSuccess: () => {
+      void queryClient.invalidateQueries({ queryKey: ["mcpConfig"] });
+    },
+  });
+}
+
+export function useRemoveMCPServer() {
+  const queryClient = useQueryClient();
+  const { config } = useMCPConfig();
+  return useMutation({
+    mutationFn: async ({ serverName }: { serverName: string }) => {
+      if (!config) {
+        throw new Error("MCP config not found");
+      }
+      const nextServers = { ...config.mcp_servers };
+      delete nextServers[serverName];
+      await updateMCPConfig({ mcp_servers: nextServers });
     },
     onSuccess: () => {
       void queryClient.invalidateQueries({ queryKey: ["mcpConfig"] });

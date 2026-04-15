@@ -50,6 +50,14 @@ EXPORT_MIMES: dict[str, str] = {
 TEXT_MIMES_PREFIX = ("text/",)
 TEXT_MIMES_EXACT = {"application/json", "application/xml", "application/x-yaml"}
 
+# Default ceiling for text payloads returned to the agent. 80 000 characters
+# works out to ~25k tokens for English and ~40k for CJK — large enough for
+# typical docs but small enough to stay well under a 128k context window
+# when combined with chat history and tool schemas. Callers can raise or
+# lower this per-invocation via the ``max_chars`` argument on
+# ``gdrive_read_file``.
+DEFAULT_MAX_CHARS = 80_000
+
 
 class GwsError(RuntimeError):
     pass
@@ -121,7 +129,10 @@ async def _list_tools() -> list[types.Tool]:
             description=(
                 "Read a Google Drive file by ID. Google Docs are exported as markdown, Sheets as "
                 "CSV, Slides as plain text, drawings as PNG (base64). Plain text files are returned "
-                "directly. Binary files return a size summary."
+                "directly. Binary files return a size summary. Large text payloads are truncated "
+                f"to ~{DEFAULT_MAX_CHARS:,} characters by default to keep the response within the "
+                "model context window — pass max_chars to override and offset to read from a "
+                "specific position."
             ),
             inputSchema={
                 "type": "object",
@@ -129,6 +140,19 @@ async def _list_tools() -> list[types.Tool]:
                     "file_id": {
                         "type": "string",
                         "description": "Google Drive file ID.",
+                    },
+                    "max_chars": {
+                        "type": "integer",
+                        "minimum": 1000,
+                        "maximum": 400_000,
+                        "default": DEFAULT_MAX_CHARS,
+                        "description": "Maximum characters of text to return. Files larger than this are truncated with a clear marker at the end.",
+                    },
+                    "offset": {
+                        "type": "integer",
+                        "minimum": 0,
+                        "default": 0,
+                        "description": "Character offset to start reading from. Use with max_chars to page through very large files.",
                     },
                 },
                 "required": ["file_id"],
@@ -184,7 +208,28 @@ async def _get_metadata(file_id: str) -> dict:
     return payload
 
 
-async def _read_file(file_id: str) -> list[types.TextContent]:
+def _slice_text(text: str, offset: int, max_chars: int, name: str, mime: str) -> str:
+    """Slice a text payload to ``[offset, offset+max_chars)`` with a clear header."""
+    total = len(text)
+    start = max(0, min(offset, total))
+    end = min(total, start + max_chars)
+    chunk = text[start:end]
+
+    header_lines = [f"# {name}", "", f"> mimeType: `{mime}`"]
+    if start > 0 or end < total:
+        header_lines.append(
+            f"> Showing characters {start:,}–{end:,} of {total:,} total "
+            f"({(end - start):,} returned; pass offset={end} to continue)."
+        )
+    header = "\n".join(header_lines) + "\n\n"
+    return header + chunk
+
+
+async def _read_file(
+    file_id: str,
+    max_chars: int = DEFAULT_MAX_CHARS,
+    offset: int = 0,
+) -> list[types.TextContent]:
     meta = await _get_metadata(file_id)
     mime = str(meta.get("mimeType", ""))
     name = str(meta.get("name", file_id))
@@ -208,8 +253,12 @@ async def _read_file(file_id: str) -> list[types.TextContent]:
             out_path = Path(workdir) / "export.out"
             if export_mime.startswith("text/") or export_mime == "application/json":
                 content = out_path.read_text(encoding="utf-8", errors="replace")
-                header = f"# {name}\n\n> Exported as `{export_mime}` from `{mime}`\n\n"
-                return [types.TextContent(type="text", text=header + content)]
+                return [
+                    types.TextContent(
+                        type="text",
+                        text=_slice_text(content, offset, max_chars, name, f"{mime} → {export_mime}"),
+                    )
+                ]
             # Binary export (e.g. PNG for drawings)
             data = out_path.read_bytes()
             b64 = base64.b64encode(data).decode("ascii")
@@ -217,7 +266,7 @@ async def _read_file(file_id: str) -> list[types.TextContent]:
                 types.TextContent(
                     type="text",
                     text=(
-                        f"# {name}\n\nmimeType: {mime}\nexport: {export_mime}\nbytes: {len(data)}\n"
+                        f"# {name}\n\nmimeType: {mime}\nexport: {export_mime}\nbytes: {len(data):,}\n"
                         f"base64 (truncated to 512 chars):\n{b64[:512]}"
                     ),
                 )
@@ -244,15 +293,19 @@ async def _read_file(file_id: str) -> list[types.TextContent]:
                 text = data.decode("utf-8")
             except UnicodeDecodeError:
                 text = data.decode("utf-8", errors="replace")
-            header = f"# {name}\n\n> mimeType: `{mime}`\n\n"
-            return [types.TextContent(type="text", text=header + text)]
+            return [
+                types.TextContent(
+                    type="text",
+                    text=_slice_text(text, offset, max_chars, name, mime),
+                )
+            ]
 
         b64 = base64.b64encode(data).decode("ascii")
         return [
             types.TextContent(
                 type="text",
                 text=(
-                    f"# {name}\n\nmimeType: {mime}\nbytes: {len(data)}\n"
+                    f"# {name}\n\nmimeType: {mime}\nbytes: {len(data):,}\n"
                     f"(binary file; base64 truncated to 512 chars)\n{b64[:512]}"
                 ),
             )
@@ -269,7 +322,9 @@ async def _call_tool(name: str, arguments: dict) -> list[types.TextContent]:
 
         if name == "gdrive_read_file":
             file_id = arguments["file_id"]
-            return await _read_file(file_id)
+            max_chars = int(arguments.get("max_chars") or DEFAULT_MAX_CHARS)
+            offset = int(arguments.get("offset") or 0)
+            return await _read_file(file_id, max_chars=max_chars, offset=offset)
 
         if name == "gdrive_get_metadata":
             file_id = arguments["file_id"]

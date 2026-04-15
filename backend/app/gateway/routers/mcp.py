@@ -1,12 +1,17 @@
 import json
 import logging
+import os
 from pathlib import Path
 from typing import Literal
 
 from fastapi import APIRouter, HTTPException
+from fastapi.responses import HTMLResponse
 from pydantic import BaseModel, Field
 
 from deerflow.config.extensions_config import ExtensionsConfig, get_extensions_config, reload_extensions_config
+from deerflow.config.server_presets import get_oauth_preset, list_oauth_presets
+from deerflow.mcp.google_oauth import build_authorization_url, exchange_code_for_tokens
+from deerflow.mcp.oauth_session import get_session_store, pkce_challenge
 
 logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/api", tags=["mcp"])
@@ -167,3 +172,213 @@ async def update_mcp_configuration(request: McpConfigUpdateRequest) -> McpConfig
     except Exception as e:
         logger.error(f"Failed to update MCP configuration: {e}", exc_info=True)
         raise HTTPException(status_code=500, detail=f"Failed to update MCP configuration: {str(e)}")
+
+
+# ============================================================================
+# OAuth authorization_code flow for interactive MCP presets (Gmail, Drive, ...)
+# ============================================================================
+
+
+def _public_base_url() -> str:
+    """Resolve the externally-reachable base URL used for OAuth redirect URIs."""
+    base = os.getenv("DEER_FLOW_PUBLIC_URL")
+    if base:
+        return base.rstrip("/")
+    # Fallback: assume local development
+    return "http://localhost:3000"
+
+
+def _redirect_uri() -> str:
+    return f"{_public_base_url()}/api/mcp/oauth/callback"
+
+
+class OAuthStartRequest(BaseModel):
+    preset_id: str = Field(..., description="ID of the OAuth preset to connect")
+
+
+class OAuthStartResponse(BaseModel):
+    authorization_url: str
+    state: str
+
+
+class OAuthPresetListResponse(BaseModel):
+    presets: list[dict]
+
+
+@router.get(
+    "/mcp/oauth/presets",
+    response_model=OAuthPresetListResponse,
+    summary="List OAuth presets",
+    description="List the OAuth-based MCP server presets available for the catalog.",
+)
+async def list_mcp_oauth_presets() -> OAuthPresetListResponse:
+    return OAuthPresetListResponse(presets=list_oauth_presets())
+
+
+@router.post(
+    "/mcp/oauth/start",
+    response_model=OAuthStartResponse,
+    summary="Begin an MCP OAuth flow",
+    description="Generate a PKCE challenge + state and return the provider authorization URL for the popup.",
+)
+async def start_mcp_oauth(request: OAuthStartRequest) -> OAuthStartResponse:
+    preset = get_oauth_preset(request.preset_id)
+    if preset is None:
+        raise HTTPException(status_code=404, detail=f"Unknown OAuth preset: {request.preset_id}")
+
+    client_id = os.getenv(preset.client_id_env)
+    client_secret = os.getenv(preset.client_secret_env)
+    if not client_id or not client_secret:
+        raise HTTPException(
+            status_code=500,
+            detail=(
+                f"OAuth preset '{preset.id}' is not configured: set "
+                f"{preset.client_id_env} and {preset.client_secret_env} in the server env."
+            ),
+        )
+
+    store = get_session_store()
+    session = store.create(preset_id=preset.id, redirect_uri=_redirect_uri())
+
+    authorization_url = build_authorization_url(
+        authorization_url=preset.authorization_url,
+        client_id=client_id,
+        redirect_uri=session.redirect_uri,
+        scope=preset.scope,
+        state=session.state,
+        code_challenge=pkce_challenge(session.code_verifier),
+        extra_params=preset.extra_auth_params,
+    )
+
+    return OAuthStartResponse(authorization_url=authorization_url, state=session.state)
+
+
+def _callback_html(status: str, preset_id: str | None, message: str) -> str:
+    """HTML page rendered in the OAuth popup after the redirect."""
+    payload = json.dumps({"type": "mcp-oauth-result", "status": status, "preset_id": preset_id, "message": message})
+    return f"""<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<title>MCP OAuth {status}</title>
+<style>
+  body {{ font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; padding: 2rem; color: #222; }}
+  .ok {{ color: #0a7f2e; }}
+  .err {{ color: #b00020; }}
+</style>
+</head>
+<body>
+<h1 class="{'ok' if status == 'success' else 'err'}">{status.title()}</h1>
+<p>{message}</p>
+<p>You can close this window.</p>
+<script>
+try {{
+  if (window.opener) {{
+    window.opener.postMessage({payload}, "*");
+  }}
+}} catch (e) {{ /* no-op */ }}
+setTimeout(function () {{ window.close(); }}, 800);
+</script>
+</body>
+</html>"""
+
+
+@router.get(
+    "/mcp/oauth/callback",
+    response_class=HTMLResponse,
+    summary="OAuth authorization_code callback",
+    description="Receives the provider redirect, exchanges the code, and persists the MCP server config.",
+)
+async def mcp_oauth_callback(
+    code: str | None = None,
+    state: str | None = None,
+    error: str | None = None,
+) -> HTMLResponse:
+    if error:
+        return HTMLResponse(_callback_html("error", None, f"Authorization denied: {error}"), status_code=400)
+    if not code or not state:
+        return HTMLResponse(_callback_html("error", None, "Missing code or state parameter."), status_code=400)
+
+    store = get_session_store()
+    session = store.pop(state)
+    if session is None:
+        return HTMLResponse(
+            _callback_html("error", None, "OAuth session expired or not found. Please retry."),
+            status_code=400,
+        )
+
+    preset = get_oauth_preset(session.preset_id)
+    if preset is None:
+        return HTMLResponse(
+            _callback_html("error", session.preset_id, f"Unknown preset: {session.preset_id}"),
+            status_code=500,
+        )
+
+    client_id = os.getenv(preset.client_id_env)
+    client_secret = os.getenv(preset.client_secret_env)
+    if not client_id or not client_secret:
+        return HTMLResponse(
+            _callback_html("error", preset.id, "OAuth preset is not configured on the server."),
+            status_code=500,
+        )
+
+    try:
+        tokens = await exchange_code_for_tokens(
+            token_url=preset.token_url,
+            code=code,
+            client_id=client_id,
+            client_secret=client_secret,
+            redirect_uri=session.redirect_uri,
+            code_verifier=session.code_verifier,
+        )
+    except Exception as e:
+        logger.error("OAuth token exchange failed: %s", e, exc_info=True)
+        return HTMLResponse(
+            _callback_html("error", preset.id, f"Token exchange failed: {e}"),
+            status_code=502,
+        )
+
+    try:
+        server_config = preset.build_server_config(
+            tokens.access_token,
+            tokens.refresh_token,
+            client_id,
+            client_secret,
+        )
+    except Exception as e:
+        logger.error("Preset config build failed: %s", e, exc_info=True)
+        return HTMLResponse(
+            _callback_html("error", preset.id, f"Failed to write credentials: {e}"),
+            status_code=500,
+        )
+
+    # Merge the new server into extensions_config.json (preserving skills + other servers)
+    try:
+        current = get_extensions_config()
+        config_path = ExtensionsConfig.resolve_config_path()
+        if config_path is None:
+            config_path = Path.cwd().parent / "extensions_config.json"
+            logger.info("No existing extensions config; creating at %s", config_path)
+
+        merged_servers = {name: server.model_dump() for name, server in current.mcp_servers.items()}
+        merged_servers[preset.id] = server_config
+
+        config_data = {
+            "mcpServers": merged_servers,
+            "skills": {name: {"enabled": skill.enabled} for name, skill in current.skills.items()},
+        }
+        with open(config_path, "w", encoding="utf-8") as f:
+            json.dump(config_data, f, indent=2)
+        reload_extensions_config()
+        logger.info("MCP OAuth preset '%s' connected; config saved to %s", preset.id, config_path)
+    except Exception as e:
+        logger.error("Failed to persist MCP config after OAuth: %s", e, exc_info=True)
+        return HTMLResponse(
+            _callback_html("error", preset.id, f"Failed to save config: {e}"),
+            status_code=500,
+        )
+
+    return HTMLResponse(
+        _callback_html("success", preset.id, f"{preset.display_name} connected successfully."),
+        status_code=200,
+    )

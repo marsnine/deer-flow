@@ -14,6 +14,7 @@ from __future__ import annotations
 
 import json
 import os
+import sys
 from collections.abc import Callable
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -108,22 +109,20 @@ def _build_gdrive_server_config(
     client_id: str,
     client_secret: str,
 ) -> dict:
-    """Write credential files for @modelcontextprotocol/server-gdrive."""
+    """Build an MCP server entry for Drive via the ``gws`` CLI wrapper.
+
+    The deprecated ``@modelcontextprotocol/server-gdrive`` only exposed Drive
+    content through MCP *resources*, which LangGraph's tool adapter does not
+    surface. We instead use a thin stdio MCP wrapper (``deerflow.mcp_servers.
+    gdrive_gws``) that shells out to https://github.com/googleworkspace/cli
+    (installed as the ``gws`` binary on the host). ``gws`` reads a plaintext
+    ``authorized_user`` credentials file pointed to by
+    ``GOOGLE_WORKSPACE_CLI_CREDENTIALS_FILE`` and transparently refreshes the
+    access token using the stored ``refresh_token``.
+    """
     creds_dir = _default_data_dir() / "google_credentials" / "gdrive"
 
-    oauth_keys_path = creds_dir / "gcp-oauth.keys.json"
-    _write_json_atomic(
-        oauth_keys_path,
-        {
-            "installed": {
-                "client_id": client_id,
-                "client_secret": client_secret,
-                "redirect_uris": ["http://localhost"],
-            }
-        },
-    )
-
-    credentials_path = creds_dir / ".gdrive-server-credentials.json"
+    credentials_path = creds_dir / "credentials.json"
     _write_json_atomic(
         credentials_path,
         {
@@ -135,16 +134,17 @@ def _build_gdrive_server_config(
         },
     )
 
+    python_bin = os.environ.get("DEER_FLOW_PYTHON", sys.executable)
+
     return {
         "enabled": True,
         "type": "stdio",
-        "command": "npx",
-        "args": ["-y", "@modelcontextprotocol/server-gdrive"],
+        "command": python_bin,
+        "args": ["-m", "deerflow.mcp_servers.gdrive_gws"],
         "env": {
-            "GDRIVE_OAUTH_PATH": str(oauth_keys_path),
-            "GDRIVE_CREDENTIALS_PATH": str(credentials_path),
+            "GOOGLE_WORKSPACE_CLI_CREDENTIALS_FILE": str(credentials_path),
         },
-        "description": "Google Drive MCP server (OAuth via Google).",
+        "description": "Google Drive via googleworkspace/cli — search, read, export Docs/Sheets/Slides.",
     }
 
 

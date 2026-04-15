@@ -56,3 +56,29 @@ export async function startOAuthFlow(
   }
   return (await response.json()) as StartOAuthResponse;
 }
+
+export interface McpServerTestResult {
+  ok: boolean;
+  tool_count: number | null;
+  tool_names: string[];
+  error: string | null;
+}
+
+export async function testMCPServer(
+  serverName: string,
+): Promise<McpServerTestResult> {
+  const response = await fetch(
+    `${getBackendBaseURL()}/api/mcp/servers/${encodeURIComponent(serverName)}/test`,
+    {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+      },
+    },
+  );
+  if (!response.ok) {
+    const text = await response.text();
+    throw new Error(`Test Connection failed: ${text}`);
+  }
+  return (await response.json()) as McpServerTestResult;
+}

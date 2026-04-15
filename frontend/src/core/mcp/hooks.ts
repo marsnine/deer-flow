@@ -4,6 +4,7 @@ import {
   listOAuthPresets,
   loadMCPConfig,
   startOAuthFlow,
+  testMCPServer,
   updateMCPConfig,
 } from "./api";
 import type { MCPServerConfig } from "./types";
@@ -87,6 +88,12 @@ export function useOAuthPresets() {
 export function useStartOAuth() {
   return useMutation({
     mutationFn: (presetId: string) => startOAuthFlow(presetId),
+  });
+}
+
+export function useTestMCPServer() {
+  return useMutation({
+    mutationFn: (serverName: string) => testMCPServer(serverName),
   });
 }
 

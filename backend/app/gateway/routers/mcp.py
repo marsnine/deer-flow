@@ -12,6 +12,7 @@ from deerflow.config.extensions_config import ExtensionsConfig, get_extensions_c
 from deerflow.config.server_presets import get_oauth_preset, list_oauth_presets
 from deerflow.mcp.google_oauth import build_authorization_url, exchange_code_for_tokens
 from deerflow.mcp.oauth_session import get_session_store, pkce_challenge
+from deerflow.mcp.secrets import encrypt_server_sensitive
 
 logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/api", tags=["mcp"])
@@ -150,9 +151,13 @@ async def update_mcp_configuration(request: McpConfigUpdateRequest) -> McpConfig
         # Load current config to preserve skills configuration
         current_config = get_extensions_config()
 
-        # Convert request to dict format for JSON serialization
+        # Convert request to dict format for JSON serialization, encrypting
+        # sensitive env vars and OAuth fields before they touch disk.
         config_data = {
-            "mcpServers": {name: server.model_dump() for name, server in request.mcp_servers.items()},
+            "mcpServers": {
+                name: encrypt_server_sensitive(server.model_dump())
+                for name, server in request.mcp_servers.items()
+            },
             "skills": {name: {"enabled": skill.enabled} for name, skill in current_config.skills.items()},
         }
 
@@ -360,8 +365,11 @@ async def mcp_oauth_callback(
             config_path = Path.cwd().parent / "extensions_config.json"
             logger.info("No existing extensions config; creating at %s", config_path)
 
-        merged_servers = {name: server.model_dump() for name, server in current.mcp_servers.items()}
-        merged_servers[preset.id] = server_config
+        merged_servers = {
+            name: encrypt_server_sensitive(server.model_dump())
+            for name, server in current.mcp_servers.items()
+        }
+        merged_servers[preset.id] = encrypt_server_sensitive(server_config)
 
         config_data = {
             "mcpServers": merged_servers,
@@ -382,3 +390,77 @@ async def mcp_oauth_callback(
         _callback_html("success", preset.id, f"{preset.display_name} connected successfully."),
         status_code=200,
     )
+
+
+# ============================================================================
+# Test Connection — probe a saved MCP server by spawning it and listing tools
+# ============================================================================
+
+
+class McpServerTestResponse(BaseModel):
+    ok: bool
+    tool_count: int | None = None
+    tool_names: list[str] = Field(default_factory=list)
+    error: str | None = None
+
+
+@router.post(
+    "/mcp/servers/{server_name}/test",
+    response_model=McpServerTestResponse,
+    summary="Test Connection to an MCP server",
+    description="Spawn the saved MCP server, run initialize + list_tools, and return the result.",
+)
+async def test_mcp_server(server_name: str) -> McpServerTestResponse:
+    config = get_extensions_config()
+    server = config.mcp_servers.get(server_name)
+    if server is None:
+        raise HTTPException(status_code=404, detail=f"Unknown MCP server: {server_name}")
+
+    transport = (server.type or "stdio").lower()
+    if transport != "stdio":
+        # Phase 3 scope: only stdio test is implemented. HTTP/SSE presets
+        # surface transport errors through the regular agent path anyway.
+        return McpServerTestResponse(
+            ok=False,
+            error=f"Test Connection for '{transport}' transport is not implemented yet.",
+        )
+
+    if not server.command:
+        return McpServerTestResponse(ok=False, error="Server config is missing 'command'.")
+
+    try:
+        from mcp.client.session import ClientSession  # noqa: PLC0415
+        from mcp.client.stdio import StdioServerParameters, stdio_client  # noqa: PLC0415
+    except Exception as e:  # pragma: no cover - mcp package always present
+        return McpServerTestResponse(ok=False, error=f"MCP client unavailable: {e}")
+
+    # Inherit the current process env so $PATH etc. are populated for spawned
+    # npx/node/python, then overlay the server-specific env (which is already
+    # plaintext because load went through decrypt_secrets).
+    merged_env = {**os.environ, **(server.env or {})}
+
+    params = StdioServerParameters(
+        command=server.command,
+        args=list(server.args or []),
+        env=merged_env,
+    )
+
+    import asyncio  # noqa: PLC0415
+
+    try:
+        async with asyncio.timeout(30):
+            async with stdio_client(params) as (read_stream, write_stream):
+                async with ClientSession(read_stream, write_stream) as session:
+                    await session.initialize()
+                    tools_result = await session.list_tools()
+                    names = [t.name for t in tools_result.tools]
+                    return McpServerTestResponse(
+                        ok=True,
+                        tool_count=len(names),
+                        tool_names=names,
+                    )
+    except TimeoutError:
+        return McpServerTestResponse(ok=False, error="Server did not respond within 30s.")
+    except Exception as e:
+        logger.warning("Test Connection for %s failed: %s", server_name, e)
+        return McpServerTestResponse(ok=False, error=str(e))

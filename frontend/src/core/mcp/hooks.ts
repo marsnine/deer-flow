@@ -1,6 +1,11 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 
-import { loadMCPConfig, updateMCPConfig } from "./api";
+import {
+  listOAuthPresets,
+  loadMCPConfig,
+  startOAuthFlow,
+  updateMCPConfig,
+} from "./api";
 import type { MCPServerConfig } from "./types";
 
 export function useMCPConfig() {
@@ -69,6 +74,26 @@ export function useAddMCPServer() {
       void queryClient.invalidateQueries({ queryKey: ["mcpConfig"] });
     },
   });
+}
+
+export function useOAuthPresets() {
+  return useQuery({
+    queryKey: ["mcpOAuthPresets"],
+    queryFn: listOAuthPresets,
+    staleTime: 60_000,
+  });
+}
+
+export function useStartOAuth() {
+  return useMutation({
+    mutationFn: (presetId: string) => startOAuthFlow(presetId),
+  });
+}
+
+export function useInvalidateMCPConfig() {
+  const queryClient = useQueryClient();
+  return () =>
+    void queryClient.invalidateQueries({ queryKey: ["mcpConfig"] });
 }
 
 export function useRemoveMCPServer() {

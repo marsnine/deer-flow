@@ -2,6 +2,8 @@ import type { MCPServerConfig } from "./types";
 
 export type PresetAuthType = "apiKey" | "oauth" | "none";
 
+export type OAuthProvider = "google" | "slack" | "notion";
+
 export interface PresetField {
   name: string;
   label: string;
@@ -18,8 +20,12 @@ export interface McpPreset {
   icon?: string;
   authType: PresetAuthType;
   docsUrl?: string;
+  /** Connect-button label for OAuth presets (e.g., "Connect with Google"). */
+  oauthProvider?: OAuthProvider;
+  /** Empty for `oauth` and `none`. */
   fields: PresetField[];
-  toServerConfig: (values: Record<string, string>) => MCPServerConfig;
+  /** Only called for apiKey / none auth types. OAuth presets are built backend-side. */
+  toServerConfig?: (values: Record<string, string>) => MCPServerConfig;
 }
 
 export const MCP_PRESETS: McpPreset[] = [
@@ -82,6 +88,28 @@ export const MCP_PRESETS: McpPreset[] = [
       },
       description: "Notion pages, databases, and blocks.",
     }),
+  },
+  {
+    id: "gmail",
+    displayName: "Gmail",
+    description:
+      "Read and send Gmail messages on behalf of the connected Google account.",
+    authType: "oauth",
+    oauthProvider: "google",
+    docsUrl:
+      "https://github.com/GongRzhe/Gmail-MCP-Server",
+    fields: [],
+  },
+  {
+    id: "gdrive",
+    displayName: "Google Drive",
+    description:
+      "Search and read files from Google Drive on behalf of the connected account.",
+    authType: "oauth",
+    oauthProvider: "google",
+    docsUrl:
+      "https://github.com/modelcontextprotocol/servers/tree/main/src/gdrive",
+    fields: [],
   },
   {
     id: "filesystem",

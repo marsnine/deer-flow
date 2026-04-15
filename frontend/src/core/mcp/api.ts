@@ -17,3 +17,42 @@ export async function updateMCPConfig(config: MCPConfig) {
   });
   return response.json();
 }
+
+export interface OAuthPresetInfo {
+  id: string;
+  displayName: string;
+  description: string;
+  provider: string;
+  configured: boolean;
+}
+
+export async function listOAuthPresets(): Promise<OAuthPresetInfo[]> {
+  const response = await fetch(`${getBackendBaseURL()}/api/mcp/oauth/presets`);
+  if (!response.ok) {
+    throw new Error(`Failed to load OAuth presets: ${response.status}`);
+  }
+  const data = (await response.json()) as { presets: OAuthPresetInfo[] };
+  return data.presets;
+}
+
+export interface StartOAuthResponse {
+  authorization_url: string;
+  state: string;
+}
+
+export async function startOAuthFlow(
+  presetId: string,
+): Promise<StartOAuthResponse> {
+  const response = await fetch(`${getBackendBaseURL()}/api/mcp/oauth/start`, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify({ preset_id: presetId }),
+  });
+  if (!response.ok) {
+    const text = await response.text();
+    throw new Error(`Failed to start OAuth flow: ${text}`);
+  }
+  return (await response.json()) as StartOAuthResponse;
+}

@@ -21,7 +21,7 @@ export default function TablePage() {
     void ensureTeableAgent();
   }, []);
 
-  const [thread, sendMessage] = useThreadStream({
+  const { thread, sendMessage } = useThreadStream({
     threadId: isNewThread ? undefined : threadId,
     context: { ...settings.context, agent_name: AGENT_NAME },
     onStart: (createdThreadId) => {

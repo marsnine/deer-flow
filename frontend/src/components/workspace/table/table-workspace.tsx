@@ -101,7 +101,7 @@ export function TableWorkspace({
               <div className="relative w-full max-w-full">
                 <InputBox
                   className="bg-background/5 w-full -translate-y-3"
-                  isNewThread={isNewThread}
+                  isWelcomeMode={isNewThread}
                   threadId={threadId}
                   autoFocus
                   status={

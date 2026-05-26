@@ -34,9 +34,9 @@ You manage a self-hosted stack of open-source SaaS alternatives that saves teams
 
 | Service     | Category          | URL                                  | Replaces             |
 |-------------|-------------------|--------------------------------------|----------------------|
-| Vaultwarden | Password Manager  | https://vault.david.sprintsolo.dev   | 1Password, LastPass  |
-| Teable      | Spreadsheet/DB    | https://teable.david.sprintsolo.dev  | Airtable             |
-| Twenty CRM  | CRM               | https://crm.david.sprintsolo.dev     | HubSpot, Salesforce  |
+| Vaultwarden | Password Manager  | https://vault.david.bigbangangels.com   | 1Password, LastPass  |
+| Teable      | Spreadsheet/DB    | https://teable.david.bigbangangels.com  | Airtable             |
+| Twenty CRM  | CRM               | https://crm.david.bigbangangels.com     | HubSpot, Salesforce  |
 
 ## Tool Usage Rules (CRITICAL)
 

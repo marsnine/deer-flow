@@ -11,6 +11,7 @@ from __future__ import annotations
 from unittest.mock import MagicMock, patch
 
 from langchain_core.tools import BaseTool, StructuredTool, tool
+from langchain_google_genai._function_utils import convert_to_genai_function_declarations
 from pydantic import BaseModel, Field
 
 from deerflow.tools.tools import get_available_tools
@@ -60,6 +61,7 @@ def _make_minimal_config(tools):
     config.skill_evolution.enabled = False
     config.sandbox = MagicMock()
     config.acp_agents = {}
+    config.get_model_config.return_value = None
     return config
 
 
@@ -198,3 +200,53 @@ def test_duplicate_triggers_warning(mock_bash, mock_cfg, caplog):
             get_available_tools(include_mcp=False)
 
     assert any("Duplicate tool name" in r.message for r in caplog.records), "Expected a duplicate-tool warning in log output"
+
+
+@patch("deerflow.tools.tools.get_app_config")
+@patch("deerflow.tools.tools.is_host_bash_allowed", return_value=True)
+def test_gemini_tools_normalize_openapi_schema_features(mock_bash, mock_cfg):
+    """Gemini tool binding accepts OpenAPI-style MCP schemas."""
+
+    def create_page(parent: dict) -> str:
+        return parent["type"]
+
+    notion_like_tool = StructuredTool(
+        name="notion_API-post-page",
+        description="Create a Notion page.",
+        args_schema={
+            "type": "object",
+            "properties": {
+                "parent": {
+                    "oneOf": [
+                        {
+                            "type": "object",
+                            "properties": {"type": {"const": "workspace"}},
+                            "required": ["type"],
+                        },
+                        {
+                            "type": "object",
+                            "properties": {"page_id": {"type": "string"}},
+                            "required": ["page_id"],
+                        },
+                    ]
+                }
+            },
+            "required": ["parent"],
+            "additionalProperties": False,
+        },
+        func=create_page,
+    )
+
+    config = _make_minimal_config([])
+    model_config = MagicMock()
+    model_config.use = "langchain_google_genai:ChatGoogleGenerativeAI"
+    model_config.supports_vision = False
+    config.get_model_config.return_value = model_config
+    mock_cfg.return_value = config
+
+    with patch("deerflow.tools.tools.BUILTIN_TOOLS", [notion_like_tool]):
+        result = get_available_tools(include_mcp=False, model_name="gemini-3.5-flash", app_config=config)
+
+    [normalized_tool] = result
+    convert_to_genai_function_declarations([normalized_tool])
+    assert normalized_tool.invoke({"parent": {"type": "workspace"}}) == "workspace"

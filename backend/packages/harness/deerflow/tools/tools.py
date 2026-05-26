@@ -1,6 +1,8 @@
 import logging
+from typing import Any
 
 from langchain.tools import BaseTool
+from langchain_core.tools import StructuredTool
 
 from deerflow.config import get_app_config
 from deerflow.config.app_config import AppConfig
@@ -39,6 +41,112 @@ def _ensure_sync_invocable_tool(tool: BaseTool) -> BaseTool:
     if getattr(tool, "func", None) is None and getattr(tool, "coroutine", None) is not None:
         tool.func = make_sync_tool_wrapper(tool.coroutine, tool.name)
     return tool
+
+
+def _infer_json_schema_type(value: Any) -> str | None:
+    if isinstance(value, bool):
+        return "boolean"
+    if isinstance(value, int):
+        return "integer"
+    if isinstance(value, float):
+        return "number"
+    if isinstance(value, str):
+        return "string"
+    if isinstance(value, list):
+        return "array"
+    if isinstance(value, dict):
+        return "object"
+    return None
+
+
+def _normalize_schema_for_gemini(schema: Any) -> Any:
+    """Normalize JSON Schema features that langchain-google-genai cannot convert.
+
+    Some MCP servers expose OpenAPI-derived schemas that include ``oneOf`` and
+    ``const``.  Google supports function calling for Gemini, but the current
+    LangChain converter only understands ``anyOf`` and typed enum-like fields;
+    otherwise it emits ``None`` for nested properties and the Google SDK rejects
+    the tool declaration.
+    """
+    if isinstance(schema, list):
+        return [_normalize_schema_for_gemini(item) for item in schema]
+    if not isinstance(schema, dict):
+        return schema
+
+    normalized: dict[str, Any] = {}
+    for key, value in schema.items():
+        if key in {"$schema", "additionalProperties"}:
+            continue
+        if key == "oneOf":
+            normalized["anyOf"] = _normalize_schema_for_gemini(value)
+            continue
+        normalized[key] = _normalize_schema_for_gemini(value)
+
+    if "const" in normalized:
+        const_value = normalized.pop("const")
+        normalized.setdefault("enum", [const_value])
+        inferred_type = _infer_json_schema_type(const_value)
+        if inferred_type is not None:
+            normalized.setdefault("type", inferred_type)
+
+    type_value = normalized.get("type")
+    if isinstance(type_value, list):
+        non_null_types = [item for item in type_value if item != "null"]
+        if "null" in type_value:
+            normalized["nullable"] = True
+        if len(non_null_types) == 1:
+            normalized["type"] = non_null_types[0]
+        elif non_null_types:
+            normalized.pop("type", None)
+            normalized["anyOf"] = [{"type": item} for item in non_null_types]
+        else:
+            normalized["type"] = "string"
+
+    return normalized
+
+
+def _tool_call_json_schema(tool: BaseTool) -> dict[str, Any]:
+    schema = tool.tool_call_schema
+    if isinstance(schema, dict):
+        json_schema = schema
+    else:
+        json_schema = schema.model_json_schema()
+    if "properties" not in json_schema:
+        json_schema["properties"] = {}
+    json_schema.setdefault("type", "object")
+    return json_schema
+
+
+def _is_google_genai_model(model_name: str | None, config: AppConfig) -> bool:
+    if not model_name:
+        return False
+    model_config = config.get_model_config(model_name)
+    return bool(model_config and model_config.use == "langchain_google_genai:ChatGoogleGenerativeAI")
+
+
+def _normalize_tools_for_gemini(tools: list[BaseTool]) -> list[BaseTool]:
+    normalized_tools: list[BaseTool] = []
+    for tool in tools:
+        try:
+            schema = _normalize_schema_for_gemini(_tool_call_json_schema(tool))
+        except Exception:
+            logger.warning("Failed to normalize tool schema for Gemini: %s", tool.name, exc_info=True)
+            normalized_tools.append(tool)
+            continue
+
+        normalized_tools.append(
+            StructuredTool(
+                name=tool.name,
+                description=tool.description,
+                args_schema=schema,
+                func=getattr(tool, "func", None),
+                coroutine=getattr(tool, "coroutine", None),
+                response_format=getattr(tool, "response_format", "content"),
+                metadata=getattr(tool, "metadata", None),
+                return_direct=getattr(tool, "return_direct", False),
+            )
+        )
+    return normalized_tools
 
 
 def get_available_tools(
@@ -217,4 +325,7 @@ def get_available_tools(
                 "Duplicate tool name %r detected and skipped — check your config.yaml and MCP server registrations (issue #1803).",
                 t.name,
             )
+    if _is_google_genai_model(model_name, config):
+        unique_tools = _normalize_tools_for_gemini(unique_tools)
+
     return unique_tools

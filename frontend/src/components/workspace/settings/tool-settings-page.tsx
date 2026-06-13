@@ -20,6 +20,7 @@ import {
 } from "@/components/ui/item";
 import { Switch } from "@/components/ui/switch";
 import { useI18n } from "@/core/i18n/hooks";
+import { MCPConfigRequestError } from "@/core/mcp/api";
 import {
   useEnableMCPServer,
   useMCPConfig,
@@ -43,6 +44,8 @@ export function ToolSettingsPage() {
   const { config, isLoading, error } = useMCPConfig();
   const [catalogOpen, setCatalogOpen] = useState(false);
   const readOnly = env.NEXT_PUBLIC_STATIC_WEBSITE_ONLY === "true";
+  const adminRequired =
+    error instanceof MCPConfigRequestError && error.isAdminRequired;
 
   return (
     <SettingsSection
@@ -67,6 +70,10 @@ export function ToolSettingsPage() {
           <div className="text-muted-foreground text-sm">
             {t.common.loading}
           </div>
+        ) : adminRequired ? (
+          <div className="text-muted-foreground text-sm">
+            {t.settings.tools.adminRequired}
+          </div>
         ) : error ? (
           <div>Error: {error.message}</div>
         ) : (
@@ -87,15 +94,16 @@ function MCPServerList({
   servers,
   readOnly,
 }: {
-  servers: Record<string, MCPServerConfig>;
+  servers?: Record<string, MCPServerConfig>;
   readOnly: boolean;
 }) {
+  const { t } = useI18n();
   const { mutate: enableMCPServer } = useEnableMCPServer();
   const { mutate: removeMCPServer } = useRemoveMCPServer();
   const testMutation = useTestMCPServer();
   const [testStates, setTestStates] = useState<Record<string, TestState>>({});
 
-  const entries = Object.entries(servers);
+  const entries = Object.entries(servers ?? {});
   if (entries.length === 0) {
     return (
       <div className="text-muted-foreground rounded-md border border-dashed p-6 text-center text-sm">

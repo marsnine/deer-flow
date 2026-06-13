@@ -3,6 +3,7 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import {
   listOAuthPresets,
   loadMCPConfig,
+  MCPConfigRequestError,
   startOAuthFlow,
   testMCPServer,
   updateMCPConfig,
@@ -13,6 +14,8 @@ export function useMCPConfig() {
   const { data, isLoading, error } = useQuery({
     queryKey: ["mcpConfig"],
     queryFn: () => loadMCPConfig(),
+    retry: (count, error) =>
+      !(error instanceof MCPConfigRequestError) && count < 3,
   });
   return { config: data, isLoading, error };
 }

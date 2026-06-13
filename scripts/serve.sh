@@ -475,9 +475,13 @@ run_service "Frontend" \
     3000 120
 
 # 3. Nginx
+# Start-Cloud runs deer-flow behind a Caddy reverse proxy that owns host port
+# 2026 and proxies to host.docker.internal:2027. The bundled nginx therefore
+# listens on 2027 (see docker/nginx/nginx.local.conf), so wait on 2027 here —
+# probing 2026 would always collide with Caddy and abort startup.
 run_service "Nginx" \
     "nginx -g 'daemon off;' -c '$REPO_ROOT/docker/nginx/nginx.local.conf' -p '$REPO_ROOT' > logs/nginx.log 2>&1" \
-    2026 10
+    2027 10
 
 # ── Ready ────────────────────────────────────────────────────────────────────
 

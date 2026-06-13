@@ -10,11 +10,17 @@ from langchain_core.tools import tool
 
 COMPOSE_DIR = os.environ.get("STARTCLOUD_COMPOSE_DIR", os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..", "..", "..", "..", "..")))
 
+# teable/twenty were migrated to a separate server; deer-flow reaches them over
+# the VPC via the URLs in .env (TEABLE_API_URL / TWENTY_API_URL), so they are no
+# longer local docker-compose containers. For these the container check is
+# skipped (remote=True) and only the HTTP health endpoint is reported.
+TEABLE_URL = os.environ.get("TEABLE_API_URL", "http://localhost:8002")
+TWENTY_URL = os.environ.get("TWENTY_API_URL", "http://localhost:3002")
+
 SERVICES = {
-    "keycloak": {"port": 8080, "url": "http://localhost:8080", "health": "/realms/master", "description": "Identity Provider (SSO)"},
-    "vaultwarden": {"port": 8003, "url": "http://localhost:8003", "health": "/alive", "description": "Password Manager"},
-    "teable": {"port": 8002, "url": "http://localhost:8002", "health": "/health", "description": "Spreadsheet / Database (Teable)"},
-    "twenty-server": {"port": 3002, "url": "http://localhost:3002", "health": "/healthz", "description": "CRM (Twenty)"},
+    "vaultwarden": {"url": "http://localhost:8003", "health": "/alive", "description": "Password Manager", "remote": False},
+    "teable": {"url": TEABLE_URL, "health": "/health", "description": "Spreadsheet / Database (Teable)", "remote": True},
+    "twenty-server": {"url": TWENTY_URL, "health": "/healthz", "description": "CRM (Twenty)", "remote": True},
 }
 
 
@@ -67,16 +73,18 @@ def stack_status() -> str:
     lines = ["=== Start-Cloud Service Status ===\n"]
 
     for svc_name, svc_info in SERVICES.items():
-        container = containers.get(svc_name, {})
-        c_state = container.get("state", "not found")
-        c_status = container.get("status", "")
-
         http_ok, http_code = _check_http(f"{svc_info['url']}{svc_info['health']}")
         health_icon = "✅" if http_ok else "❌"
 
         lines.append(f"{health_icon} {svc_name}")
         lines.append(f"   Description: {svc_info['description']}")
-        lines.append(f"   Container:   {c_state} ({c_status})")
+        if svc_info.get("remote"):
+            lines.append("   Location:    remote server (migrated, VPC)")
+        else:
+            container = containers.get(svc_name, {})
+            c_state = container.get("state", "not found")
+            c_status = container.get("status", "")
+            lines.append(f"   Container:   {c_state} ({c_status})")
         lines.append(f"   HTTP:        {'OK' if http_ok else 'FAIL'} (status {http_code})")
         lines.append(f"   URL:         {svc_info['url']}")
         lines.append("")

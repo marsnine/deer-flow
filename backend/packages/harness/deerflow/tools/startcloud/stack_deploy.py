@@ -30,6 +30,23 @@ def _run_compose(args: list[str], timeout: int = 120) -> str:
         return f"ERROR: {e}"
 
 
+def _reload_caddy() -> str:
+    # Recreating a compose service gives the new container a new docker network IP,
+    # but Caddy keeps the old upstream IP cached → 502s until reload re-resolves DNS.
+    try:
+        result = subprocess.run(
+            ["docker", "exec", "startcloud-caddy", "caddy", "reload", "--config", "/etc/caddy/Caddyfile"],
+            capture_output=True,
+            text=True,
+            timeout=30,
+        )
+        if result.returncode == 0:
+            return "Caddy reloaded (upstream DNS refreshed)"
+        return f"Caddy reload skipped/failed: {result.stderr.strip() or result.stdout.strip()}"
+    except Exception as e:
+        return f"Caddy reload error: {e}"
+
+
 @tool
 def stack_deploy(action: str, service: str = "all") -> str:
     """Deploy, restart, or stop the Start-Cloud service stack.
@@ -37,7 +54,7 @@ def stack_deploy(action: str, service: str = "all") -> str:
     Args:
         action: One of 'up', 'down', 'restart', 'logs', 'pull'
         service: 'all' for entire stack, or specific service name
-                 (postgres, keycloak, vaultwarden, nocodb, twenty-server, twenty-worker, redis)
+                 (postgres, vaultwarden, teable, twenty-server, twenty-worker, redis, caddy)
     """
     valid_actions = {"up", "down", "restart", "logs", "pull"}
     if action not in valid_actions:
@@ -48,8 +65,9 @@ def stack_deploy(action: str, service: str = "all") -> str:
     if action == "up":
         args = ["up", "-d", "--remove-orphans"] + service_args
         result = _run_compose(args, timeout=300)
+        caddy_msg = _reload_caddy() if service != "caddy" else "Caddy reload skipped (caddy itself was (re)started)"
         status = _run_compose(["ps", "--format", "json"])
-        return f"Stack deploy result:\n{result}\n\nCurrent status:\n{status}"
+        return f"Stack deploy result:\n{result}\n\n{caddy_msg}\n\nCurrent status:\n{status}"
 
     elif action == "down":
         args = ["down"] + service_args
